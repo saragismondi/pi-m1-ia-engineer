@@ -127,7 +127,7 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
     except ValueError as e:  # proveedor o prompt inexistente, o falta una clave
         raise TriageError(str(e)) from e
 
-    key = cache.make_key(provider.name, provider.model, prompt.version, query)
+    key = cache.make_key(provider.name, provider.model, prompt.version, moderation, query)
     if use_cache and (hit := cache.get(key)):
         response = TriageResponse.model_validate(hit)
         log_event("cache", provider.name, provider.model, prompt.version, response.category,

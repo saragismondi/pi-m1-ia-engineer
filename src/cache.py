@@ -1,9 +1,12 @@
 """Caché de respuestas con clave MD5 (extra credit).
 
-Si llega la misma consulta con el mismo proveedor, modelo y versión de prompt, devolvemos
-la respuesta guardada sin volver a llamar al LLM: costo 0 y latencia casi 0.
+Si llega la misma consulta con el mismo proveedor, modelo, versión de prompt y modo de moderación,
+devolvemos la respuesta guardada sin volver a llamar al LLM: costo 0 y latencia casi 0.
 
-Clave = md5(proveedor | modelo | versión de prompt | consulta normalizada).
+Clave = md5(proveedor | modelo | versión de prompt | modo de moderación | consulta normalizada).
+
+El modo de moderación está en la clave desde el 08/11/2026 (mejora A5). Antes, una respuesta guardada
+con la moderación apagada se reutilizaba con la moderación prendida, y se salteaba el moderador.
 MD5 no se usa acá por seguridad, solo para tener una clave corta y fija a partir de un texto.
 
 Archivo: data/cache.jsonl, una línea {"key": ..., "response": {...}} por entrada (append-only).
@@ -21,9 +24,10 @@ def cache_path() -> Path:
     return Path(os.getenv("CACHE_PATH", DEFAULT_CACHE_PATH))
 
 
-def make_key(provider: str, model: str, prompt_version: str, query: str) -> str:
+def make_key(provider: str, model: str, prompt_version: str, moderation: str, query: str) -> str:
     normalized = " ".join(query.lower().split())  # mayúsculas y espacios extra no cambian la clave
-    return hashlib.md5(f"{provider}|{model}|{prompt_version}|{normalized}".encode("utf-8")).hexdigest()
+    raw = f"{provider}|{model}|{prompt_version}|{moderation}|{normalized}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
 def get(key: str) -> dict | None:

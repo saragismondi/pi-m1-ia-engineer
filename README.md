@@ -148,6 +148,7 @@ consulta
 | `evals/adversarial_runner.py` | Evals adversariales (bonus). |
 | `tests/test_guardrails.py` | Tests de los guardrails por patrones, sin LLM. |
 | `tests/test_actions.py` | Tests del guardrail de acciones, sin LLM. |
+| `tests/test_cache.py` | Tests de la clave de caché, sin LLM. |
 
 ## Context engineering: técnica elegida
 
@@ -326,7 +327,7 @@ Gasto real de todo el desarrollo y los evals en Anthropic: 0,112 USD (suma de `c
 ## Extra credit: caché MD5
 
 `src/cache.py` guarda cada respuesta en `data/cache.jsonl`. La clave es el MD5 de proveedor + modelo +
-versión de prompt + consulta normalizada (minúsculas y sin espacios extra). Si llega la misma
+versión de prompt + modo de moderación + consulta normalizada (minúsculas y sin espacios extra). Si llega la misma
 consulta, responde sin llamar al LLM:
 
 ```text
@@ -361,7 +362,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   - bil-09 ("le confirmaré cómo se aplicará el pago") y acc-02 ("vamos a ayudarte a asignar el rol") parecen falsos positivos.
   - En esos casos el cliente recibe una respuesta genérica en lugar de una útil.
 - **El moderador cuesta** unos 0,00016 USD por ticket y suma alrededor de 1 segundo por llamada, aunque el proveedor principal sea gratis.
-- **La clave de caché** no incluye el modo de moderación: una respuesta guardada con `--moderation off` se reutiliza con moderación activa.
+- **La clave de caché** no incluía el modo de moderación: una respuesta guardada con `--moderation off` se reutilizaba con moderación activa. Corregido el 08/11/2026 (`tests/test_cache.py`). Las entradas viejas de `data/cache.jsonl` dejan de coincidir.
 - **Error 400 de Groq:** en una corrida, ante un ataque con etiquetas falsas, Groq no pudo generar el JSON y devolvió ese error (adv-04). El servicio no lo reintenta y devuelve un error.
 - **`confidence`** es la confianza que informa el modelo, no una probabilidad calibrada.
 - **Dataset:** 40 casos etiquetados a mano. Es chico, y los errores se concentran en los casos ambiguos.
@@ -394,11 +395,12 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   ```bash
   python tests/test_guardrails.py
   python tests/test_actions.py
+  python tests/test_cache.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`
   y `plazo`) y fallaron 3 de los 13 tests.
-- **Falta testear** la caché, el parseo del JSON y los reintentos sin llamar al LLM. Se podría hacer con
+- **Falta testear** el parseo del JSON y los reintentos sin llamar al LLM (la clave de caché ya tiene tests). Se podría hacer con
   un proveedor falso que devuelva respuestas armadas a mano.
 
 ## Uso de IA en el desarrollo
