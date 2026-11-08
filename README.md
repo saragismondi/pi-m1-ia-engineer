@@ -489,3 +489,23 @@ El código, los evals y esta documentación se hicieron con Claude Code (Claude 
   - Subir `MAX_TOKENS` se descartó por elección mía.
   - Pagar otro proveedor se descartó porque no hacía falta para cumplir la consigna.
 - Los diagnósticos se verificaron con datos de `data/metrics.jsonl` y de `evals/results/` antes de cambiar el código.
+
+## Extra: especificaciones diagramáticas del proyecto
+
+> Este apartado **no forma parte de la evaluación**. Es un agregado personal para explicar el proyecto de
+> forma visual y pedagógica.
+
+**[Triage Nubbix por dentro](https://saragismondi.github.io/triage-nubbix-diagrama/)** es una página
+interactiva que recorre el servicio parada por parada: qué hace cada paso en lenguaje simple, qué palabras
+técnicas usa, qué puede salir mal con la IA, quién lo controla y cuál es su código real.
+
+Incluye:
+- **un mapa de flujo** con todos los desvíos: bloqueos, alcance, reintentos, reemplazos y errores;
+- **"Seguí un ticket"**: 7 tickets reales (un reclamo normal, un ataque disfrazado, un pedido ajeno, una
+  inyección escondida, datos personales, ingeniería social) y por qué parada pasa o sale cada uno;
+- **qué frena cada capa de seguridad**, con lo medido y su costo;
+- **lo que aprendimos rompiendo cosas**: los errores reales del proyecto y cómo se encontraron;
+- **un glosario** de más de 60 términos, cada uno con un ejemplo de este proyecto.
+
+El código que muestra la página se extrae automáticamente de este repositorio, sin copias a mano. Código
+fuente de la página: [saragismondi/triage-nubbix-diagrama](https://github.com/saragismondi/triage-nubbix-diagrama).
