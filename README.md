@@ -147,6 +147,7 @@ consulta
 | `evals/runner.py` | Evals sobre el dataset. |
 | `evals/adversarial_runner.py` | Evals adversariales (bonus). |
 | `tests/test_guardrails.py` | Tests de los guardrails por patrones, sin LLM. |
+| `tests/test_actions.py` | Tests del guardrail de acciones, sin LLM. |
 
 ## Context engineering: técnica elegida
 
@@ -227,6 +228,7 @@ Hay dos capas, tanto a la entrada como a la salida:
    - Entrada: frases de injection conocidas, como "ignorá tus instrucciones", "modo desarrollador" o etiquetas falsas como `</ticket>`.
    - Entrada, contra trucos de escritura: los patrones se prueban también sobre una versión "desofuscada" del texto (sin caracteres invisibles, con letras cirílicas o griegas y números como `1gn0rá` pasados a letras, y con letras separadas unidas) y sobre el texto escondido en base64. También hay patrones en portugués. El texto que recibe el modelo no cambia.
    - Salida: promesas de reintegro, corrección, garantía o plazo, y fragmentos del system prompt.
+   - Acciones para el agente: saltear una verificación ("sin verificar la identidad"), aprobar dinero ("Aprobar el reintegro") o borrar una cuenta, y fragmentos del system prompt. Una acción marcada **no se borra**: se le agrega `[REVISAR: motivo]` adelante, para que el agente la mire antes de seguirla.
 2. **Moderador LLM** (`src/moderation.py`): detecta las paráfrasis que los patrones no reconocen.
    - Haiku puntúa el riesgo de 0 a 1 por categoría, con salida estructurada.
    - Entrada: inyección, jailbreak y extracción.
@@ -391,6 +393,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
 
   ```bash
   python tests/test_guardrails.py
+  python tests/test_actions.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`

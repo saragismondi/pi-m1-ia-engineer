@@ -11,7 +11,7 @@ import os
 import time
 
 from src import cache
-from src.guardrails import SAFE_ANSWER, check_input, check_output
+from src.guardrails import ACTION_REVIEW_PREFIX, SAFE_ANSWER, check_actions, check_input, check_output
 from src.metrics import log_event, log_request
 from src.moderation import moderate
 from src.prompts import load_prompt
@@ -37,6 +37,7 @@ class TriageResult:
     input_flag: str | None = None                          # patrón de injection detectado (no se llamó al LLM)
     output_flags: list[str] = field(default_factory=list)  # problemas del answer original (se reemplazó)
     original_answer: str | None = None                     # answer del modelo antes del reemplazo
+    action_flags: list[str] = field(default_factory=list)  # problemas de las acciones (se marcaron con [REVISAR])
     cached: bool = False
 
 
@@ -146,7 +147,17 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
 
     response = call_llm(provider, prompt, query)
 
-    result = TriageResult(response=response)
+    # Acciones para el agente (A2): las riesgosas no se borran, se marcan con [REVISAR] para que el
+    # agente las mire antes de seguirlas. Borrarlas le escondería información a quien decide.
+    per_action = check_actions(response.actions, prompt.system)
+    action_flags = sorted({f for flags_i in per_action for f in flags_i})
+    if action_flags:
+        response = response.model_copy(update={"actions": [
+            ACTION_REVIEW_PREFIX.format(flags=", ".join(f)) + a if f else a
+            for a, f in zip(response.actions, per_action)
+        ]})
+
+    result = TriageResult(response=response, action_flags=action_flags)
     flags = check_output(response.answer, prompt.system)
     # Capa 2 de salida: si los patrones no vieron nada, el moderador busca paráfrasis.
     if not flags and moderation in ("output", "both"):

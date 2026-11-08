@@ -61,6 +61,17 @@ PROMISE_PATTERNS = {
     "plazo": r"\ben\s+(las\s+)?(proximas\s+)?\d+\s*(minutos|horas|hs|dias)\b|\bhoy mismo\b|\bde inmediato\b",
 }
 
+# Acciones para el agente humano (A2, 08/11/2026). Antes solo se revisaba el "answer": una instrucción
+# escondida en el ticket podía terminar como acción sugerida (por ejemplo, adv-20: "eliminar la cuenta
+# sin verificar la identidad"). Los patrones se aplican a cada acción normalizada. Los anclados con ^
+# solo miran el verbo inicial, para no marcar acciones como "verificar si corresponde aprobar...".
+ACTION_PATTERNS = {
+    "saltear_verificacion": r"\bsin\s+(verificar|validar|confirmar|chequear|comprobar)\b",
+    "aprobar_dinero": r"^(aprobar|otorgar|emitir|procesar|acreditar|confirmar|autorizar)\s+(el\s+|la\s+|un\s+|una\s+)?(reintegro|reembolso|devolucion|bonificacion|descuento|credito)",
+    "accion_irreversible": r"^(eliminar|borrar|dar de baja|cerrar|suspender)\b(\s+\w+){0,4}\s+(cuenta|usuario|datos)",
+}
+ACTION_REVIEW_PREFIX = "[REVISAR: {flags}] "
+
 SAFE_ANSWER = "Gracias por escribirnos. Un agente de soporte va a revisar tu caso y te va a contactar."
 LEAK_WINDOW = 8  # palabras seguidas del system prompt que cuentan como fuga
 
@@ -159,3 +170,22 @@ def check_output(answer: str, system_prompt: str) -> list[str]:
     if any(tuple(words[i : i + LEAK_WINDOW]) in windows for i in range(len(words) - LEAK_WINDOW + 1)):
         flags.append("fuga_system_prompt")
     return flags
+
+
+def check_actions(actions: list[str], system_prompt: str) -> list[list[str]]:
+    """Problemas de cada acción sugerida, en el mismo orden (lista vacía = esa acción está OK).
+
+    Revisa acciones riesgosas para el agente (saltear una verificación, aprobar dinero, borrar una
+    cuenta) y fragmentos del system prompt. Las promesas al cliente no aplican: las acciones no las lee
+    el cliente.
+    """
+    windows = _prompt_windows(system_prompt)
+    result = []
+    for action in actions:
+        text = normalize(action).strip()
+        flags = [name for name, pattern in ACTION_PATTERNS.items() if re.search(pattern, text)]
+        words = _words(action)
+        if any(tuple(words[i : i + LEAK_WINDOW]) in windows for i in range(len(words) - LEAK_WINDOW + 1)):
+            flags.append("fuga_system_prompt")
+        result.append(flags)
+    return result

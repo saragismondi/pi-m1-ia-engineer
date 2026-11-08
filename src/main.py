@@ -53,6 +53,8 @@ def main() -> int:
         print(f"[guardrail de entrada] bloqueado: {result.input_flag} (no se generó respuesta)", file=sys.stderr)
     if result.output_flags:
         print(f"[guardrail de salida] answer reemplazado: {', '.join(result.output_flags)}", file=sys.stderr)
+    if result.action_flags:
+        print(f"[guardrail de acciones] acciones marcadas con [REVISAR]: {', '.join(result.action_flags)}", file=sys.stderr)
     if result.cached:
         print("[caché] respuesta guardada, no se llamó al LLM", file=sys.stderr)
 
