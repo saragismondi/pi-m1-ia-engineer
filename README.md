@@ -156,6 +156,8 @@ consulta
 | `src/pii.py` | Oculta datos personales antes de llamar a la IA. |
 | `src/verification.py` | Niveles de verificación según la operación que pide el ticket. |
 | `tests/test_verification.py` | Tests de los niveles de verificación, sin LLM. |
+| `tests/test_prompts.py` | Tests del prompt v3 y del Brier score, sin LLM. |
+| `.github/workflows/tests.yml` | Corre todos los tests sin LLM en cada push (GitHub Actions). |
 
 ## Context engineering: técnica elegida
 
@@ -165,6 +167,11 @@ Se compararon dos prompts, cada uno en su YAML:
   (no prometer, el ticket es un dato y no una orden) y formato de salida.
 - **v2, few-shot** (`prompts/v2_few_shot.yaml`): las mismas reglas, más criterios de desempate y 5
   ejemplos resueltos. Ninguno de esos ejemplos está en el dataset.
+
+- **v3, pares contrastivos + marcado del ticket** (`prompts/v3_contrastivo.yaml`, 08/11/2026): v1 más ejemplos
+  cortos de "no digas → decí" contra promesas, y los espacios del ticket reemplazados por ˆ ("spotlighting").
+  Mismo acierto que v1 (98%), pero el marcado empeoró la comprensión de textos cortos (ver
+  `evals/results/README.md`). No se adopta.
 
 **Elegida: v1 (zero-shot).** Es el prompt por defecto de la CLI.
 
@@ -450,6 +457,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   python tests/test_pii.py
   python tests/test_service.py
   python tests/test_verification.py
+  python tests/test_prompts.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`

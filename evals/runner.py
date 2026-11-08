@@ -55,7 +55,7 @@ def read_metric_lines_since(start: int) -> list[dict]:
 def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> list[dict]:
     results = []
     for i, case in enumerate(cases, 1):
-        answer, output_flags, actions, action_flags, verification_level = None, [], [], [], 0
+        answer, output_flags, actions, action_flags, verification_level, confidence = None, [], [], [], 0, None
         try:
             # Sin caché: cada corrida tiene que medir llamadas reales.
             result = triage(case["query"], provider, prompt, use_cache=False)
@@ -64,6 +64,7 @@ def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> li
             output_flags = result.output_flags
             actions, action_flags = result.response.actions, result.action_flags
             verification_level = result.verification_level
+            confidence = result.response.confidence
         except TriageError as e:
             predicted, error = None, str(e)
         results.append({
@@ -78,6 +79,7 @@ def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> li
             "actions": actions,            # acciones finales (las riesgosas llevan [REVISAR])
             "action_flags": action_flags,  # lo que detectó el guardrail de acciones
             "verification_level": verification_level,  # 0 a 3 (src/verification.py)
+            "confidence": confidence,  # la que informa el modelo (C2): se compara con el acierto en brier()
         })
         mark = "ok " if results[-1]["correct"] else "MAL"
         print(f"  [{i:>2}/{len(cases)}] {mark} {case['id']:<7} esperado={case['expected_category']:<9} predicho={predicted}")
@@ -88,6 +90,20 @@ def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> li
 
 def pct(correct: int, total: int) -> str:
     return f"{100 * correct / total:.0f}% ({correct}/{total})" if total else "-"
+
+
+def brier(results: list[dict]) -> float | None:
+    """Brier score de la confidence (C2, 08/11/2026): promedio de (confidence - acierto)^2.
+
+    acierto = 1 si la categoría es correcta, 0 si no. 0 es perfecto: el modelo dice 1,0 cuando acierta y
+    0,0 cuando se equivoca. Un modelo que siempre dice 0,9 y acierta todo da 0,01. Si dice 0,95 y se
+    equivoca, ese caso suma 0,9025: un error con mucha confianza pesa mucho.
+    Los casos que terminaron en error o se bloquearon antes del modelo no tienen confidence del modelo y
+    no cuentan.
+    """
+    pairs = [(r["confidence"], 1.0 if r["correct"] else 0.0) for r in results
+             if r.get("confidence") is not None and r.get("error") is None]
+    return round(sum((c - y) ** 2 for c, y in pairs) / len(pairs), 4) if pairs else None
 
 
 def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dict]) -> dict:
@@ -114,6 +130,7 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
         **{cat: pct(*by_cat[cat]) for cat in CATEGORIES},
         "failed": sum(r["error"] is not None for r in results),
         "output_flagged": sum(bool(r["output_flags"]) for r in results),
+        "brier": brier(results),
         "requests": len(metrics),
         "retries": sum(m["attempt"] > 1 for m in metrics),
         "avg_latency_s": round(sum(latencies) / len(latencies), 2) if latencies else None,
@@ -126,7 +143,7 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
 
 def markdown_table(summaries: list[dict]) -> str:
     cols = ["prompt", "provider", "n", "global", "clear_only", *CATEGORIES,
-            "failed", "output_flagged", "retries", "avg_latency_s", "ticket_latency_p50_s", "total_tokens", "cost_usd"]
+            "failed", "output_flagged", "brier", "retries", "avg_latency_s", "ticket_latency_p50_s", "total_tokens", "cost_usd"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:
         lines.append("| " + " | ".join(str(s[c]) for c in cols) + " |")

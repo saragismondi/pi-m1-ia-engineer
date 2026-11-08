@@ -1,0 +1,33 @@
+# Corre los tests sin LLM en cada push y pull request (mejora D2, 08/11/2026).
+# No necesita claves de API: ningún test llama a un proveedor (usan proveedores falsos).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"  # la versión con la que se probó el proyecto
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Tests (sin LLM, costo 0)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python tests/test_guardrails.py
+          python tests/test_actions.py
+          python tests/test_cache.py
+          python tests/test_pii.py
+          python tests/test_service.py
+          python tests/test_verification.py
+          python tests/test_prompts.py

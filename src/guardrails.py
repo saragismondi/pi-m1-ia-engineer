@@ -194,8 +194,10 @@ def _prompt_windows(system_prompt: str) -> set[tuple[str, ...]]:
     Se excluyen las líneas de ejemplos few-shot (Ticket: ... / {"answer": ...}): son respuestas
     modelo y una respuesta real puede parecerse a ellas sin que sea una fuga.
     """
+    # También se excluyen los pares contrastivos de v3 ("no digas" → "decí"): la parte "decí" es justamente
+    # lo que se espera que el modelo escriba (C1, 08/11/2026).
     lines = [l for l in system_prompt.splitlines()
-             if not l.strip().startswith(("Ticket:", '{"answer"'))]
+             if not l.strip().startswith(("Ticket:", '{"answer"')) and "→" not in l]
     words = _words("\n".join(lines))
     return {tuple(words[i : i + LEAK_WINDOW]) for i in range(len(words) - LEAK_WINDOW + 1)}
 

@@ -16,8 +16,14 @@ class Prompt:
     technique: str
     system: str
     user_template: str
+    # Marcado del ticket ("spotlighting" por datamarking, C1, 08/11/2026): si el YAML define `datamark`, ese
+    # carácter reemplaza los espacios del texto del cliente. Así el modelo distingue a simple vista qué texto
+    # es un dato del cliente, aunque el atacante escriba algo que parezca una instrucción. Opcional.
+    datamark: str | None = None
 
     def render_user(self, query: str) -> str:
+        if self.datamark:
+            query = " ".join(query.split()).replace(" ", self.datamark)
         # replace() y no format(): el ticket puede traer llaves { } que romperían format().
         return self.user_template.replace("{query}", query)
 
@@ -37,4 +43,5 @@ def load_prompt(version: str) -> Prompt:
         technique=data["technique"],
         system=data["system"],
         user_template=data["user_template"],
+        datamark=data.get("datamark"),
     )
