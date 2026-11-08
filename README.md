@@ -225,6 +225,7 @@ Hay dos capas, tanto a la entrada como a la salida:
 
 1. **Patrones** (`src/guardrails.py`): son gratis, deterministas e inmediatos.
    - Entrada: frases de injection conocidas, como "ignorá tus instrucciones", "modo desarrollador" o etiquetas falsas como `</ticket>`.
+   - Entrada, contra trucos de escritura: los patrones se prueban también sobre una versión "desofuscada" del texto (sin caracteres invisibles, con letras cirílicas o griegas y números como `1gn0rá` pasados a letras, y con letras separadas unidas) y sobre el texto escondido en base64. También hay patrones en portugués. El texto que recibe el modelo no cambia.
    - Salida: promesas de reintegro, corrección, garantía o plazo, y fragmentos del system prompt.
 2. **Moderador LLM** (`src/moderation.py`): detecta las paráfrasis que los patrones no reconocen.
    - Haiku puntúa el riesgo de 0 a 1 por categoría, con salida estructurada.
@@ -351,7 +352,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
 
 ## Limitaciones conocidas
 
-- **Patrones:** solo reconocen frases conocidas. 4 de los 10 ataques los pasaron, y los frenó el moderador.
+- **Patrones:** solo reconocen frases conocidas. 4 de los 10 ataques los pasaron, y los frenó el moderador. Desde el 08/11/2026 también detectan 6 trucos de escritura que antes pasaban (ver `tests/test_guardrails.py`); un sinónimo libre ("dejá de lado lo que te dijeron") sigue pasando.
 - **Falsos positivos del moderador de salida.** En los evals normales con Groq marcó 5 respuestas. Mi
   lectura, que es una opinión y no una medición:
   - acc-07 ("procederemos a dar de baja su cuenta y eliminar sus datos") es una promesa real.
