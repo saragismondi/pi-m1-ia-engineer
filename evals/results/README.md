@@ -122,3 +122,23 @@ lo correcto: esa tercera acción menciona eliminar la cuenta, pero para rechazar
 
 **Lo que no se probó:** un modelo que sí copie la instrucción como acción. Con Haiku no pasó; el control
 está cubierto por `tests/test_actions.py` con un proveedor falso.
+
+## Control final del bloque A: `2026-11-08_0024_anthropic_v1` (08/11/2026)
+
+Después de A1 (desofuscación), A2 (acciones), A4 (datos personales) y A5 (clave de caché), los 40 casos
+con Haiku y v1, moderación completa: `python evals/runner.py --provider anthropic --prompt v1 --sleep 0.3`.
+
+| | Antes (`1739_anthropic_v1`) | **Después** |
+|---|---|---|
+| Score global | 98% (39/40) | **100% (40/40)** |
+| Fallidos / reintentos | 0 / 0 | 0 / 0 |
+| Respuestas reemplazadas | 0 | 0 |
+| Acciones marcadas con `[REVISAR]` | (no existía) | **0** |
+| Costo | 0,015156 USD | 0,015197 USD |
+
+- **Los cambios no bajaron el acierto ni subieron el costo.**
+- El caso que antes fallaba (acc-05) ahora acertó. Es **una sola corrida** y la API de Anthropic usada no
+  acepta `temperature`, así que no se puede atribuir la mejora a los cambios del bloque A.
+- **Falsos positivos de A2:** ninguna de las 118 acciones reales de los 40 casos se marcó.
+- **Gasto total del bloque A en API:** 0,0229 USD (adversariales 0,0074 + prueba de adv-20 0,0003 + este
+  control 0,0152).

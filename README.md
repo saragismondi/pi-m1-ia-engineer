@@ -149,6 +149,8 @@ consulta
 | `tests/test_guardrails.py` | Tests de los guardrails por patrones, sin LLM. |
 | `tests/test_actions.py` | Tests del guardrail de acciones, sin LLM. |
 | `tests/test_cache.py` | Tests de la clave de caché, sin LLM. |
+| `tests/test_pii.py` | Tests del ocultamiento de datos personales, sin LLM. |
+| `src/pii.py` | Oculta datos personales antes de llamar a la IA. |
 
 ## Context engineering: técnica elegida
 
@@ -234,6 +236,12 @@ Hay dos capas, tanto a la entrada como a la salida:
    - Haiku puntúa el riesgo de 0 a 1 por categoría, con salida estructurada.
    - Entrada: inyección, jailbreak y extracción.
    - Salida: promesa indebida, fuga interna y obediencia a la inyección.
+
+**Datos personales (desde el 08/11/2026).** Antes de llamar a cualquier IA, `src/pii.py` reemplaza emails,
+tarjetas (validadas con Luhn), CUIT/CUIL (con dígito verificador), CBU, DNI y teléfonos por marcadores como
+`[EMAIL]` o `[TARJETA]`. El agente humano sigue viendo el ticket original; solo cambia lo que recibe el
+proveedor. Se apaga con `PII_REDACTION=off`. Limitación: son patrones, y un número de 11 dígitos que
+cumpla las reglas de un CUIT se oculta aunque sea otra cosa.
 
 Qué pasa cuando algo se detecta:
 - **Entrada:** no se llama al modelo. Se devuelve una respuesta segura y el ticket se deriva a revisión humana.
@@ -396,6 +404,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   python tests/test_guardrails.py
   python tests/test_actions.py
   python tests/test_cache.py
+  python tests/test_pii.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 import os
 import time
 
-from src import cache
+from src import cache, pii
 from src.guardrails import ACTION_REVIEW_PREFIX, SAFE_ANSWER, check_actions, check_input, check_output
 from src.metrics import log_event, log_request
 from src.moderation import moderate
@@ -39,6 +39,7 @@ class TriageResult:
     original_answer: str | None = None                     # answer del modelo antes del reemplazo
     action_flags: list[str] = field(default_factory=list)  # problemas de las acciones (se marcaron con [REVISAR])
     cached: bool = False
+    pii_redacted: dict[str, int] = field(default_factory=dict)  # datos ocultados antes de llamar a la IA
 
 
 def parse_response(text: str) -> TriageResponse:
@@ -118,6 +119,12 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
         log_event("bloqueado_patron", provider_name, None, prompt_version, "other", time.perf_counter() - start)
         return TriageResult(response=blocked_response(injection), input_flag=injection)
 
+    # Datos personales (A4): desde acá, la IA recibe la consulta con los datos ocultos ("[EMAIL]",
+    # "[TARJETA]"...). Los patrones de arriba ya revisaron el texto original. PII_REDACTION=off lo apaga.
+    pii_counts: dict[str, int] = {}
+    if os.getenv("PII_REDACTION", "on") != "off":
+        query, pii_counts = pii.redact(query)
+
     try:
         provider = get_provider(provider_name)
         # El moderador puede ser otro proveedor (por defecto Haiku): así no consume el cupo diario
@@ -132,7 +139,7 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
         response = TriageResponse.model_validate(hit)
         log_event("cache", provider.name, provider.model, prompt.version, response.category,
                   time.perf_counter() - start)
-        return TriageResult(response=response, cached=True)
+        return TriageResult(response=response, cached=True, pii_redacted=pii_counts)
 
     # Capa 2 de entrada: el moderador LLM, para ataques que los patrones no reconocen.
     if input_guardrail and moderation == "both":
@@ -143,7 +150,7 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
             # que la ejecución terminó bloqueada, sin llamar al modelo que responde.
             log_event("bloqueado_moderador", provider.name, provider.model, prompt.version, "other",
                       time.perf_counter() - start)
-            return TriageResult(response=blocked_response(reason), input_flag=reason)
+            return TriageResult(response=blocked_response(reason), input_flag=reason, pii_redacted=pii_counts)
 
     response = call_llm(provider, prompt, query)
 
@@ -157,7 +164,7 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
             for a, f in zip(response.actions, per_action)
         ]})
 
-    result = TriageResult(response=response, action_flags=action_flags)
+    result = TriageResult(response=response, action_flags=action_flags, pii_redacted=pii_counts)
     flags = check_output(response.answer, prompt.system)
     # Capa 2 de salida: si los patrones no vieron nada, el moderador busca paráfrasis.
     if not flags and moderation in ("output", "both"):
