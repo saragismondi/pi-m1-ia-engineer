@@ -56,6 +56,8 @@ def main() -> int:
     if result.pii_redacted:
         detail = ", ".join(f"{n} {kind}" for kind, n in result.pii_redacted.items())
         print(f"[datos personales] ocultados antes de llamar a la IA: {detail}", file=sys.stderr)
+    if result.verification_level:
+        print(f"[verificación] nivel {result.verification_level}: {', '.join(result.verification_ops)}", file=sys.stderr)
     if result.action_flags:
         print(f"[guardrail de acciones] acciones marcadas con [REVISAR]: {', '.join(result.action_flags)}", file=sys.stderr)
     if result.cached:

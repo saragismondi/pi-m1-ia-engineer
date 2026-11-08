@@ -154,6 +154,8 @@ consulta
 | `tests/test_pii.py` | Tests del ocultamiento de datos personales, sin LLM. |
 | `tests/test_service.py` | Tests del parseo del JSON y los reintentos, sin LLM. |
 | `src/pii.py` | Oculta datos personales antes de llamar a la IA. |
+| `src/verification.py` | Niveles de verificación según la operación que pide el ticket. |
+| `tests/test_verification.py` | Tests de los niveles de verificación, sin LLM. |
 
 ## Context engineering: técnica elegida
 
@@ -246,6 +248,34 @@ tarjetas (validadas con Luhn), CUIT/CUIL (con dígito verificador), CBU, DNI y t
 proveedor. Se apaga con `PII_REDACTION=off`. Limitación: son patrones, y un número de 11 dígitos que
 cumpla las reglas de un CUIT se oculta aunque sea otra cosa.
 
+**Alcance cerrado (desde el 08/11/2026).** El servicio atiende soporte de Nubbix: facturación, problemas
+técnicos, la cuenta (usuarios, permisos, email, acceso) y consultas comerciales. Un pedido ajeno
+(programación general, tareas, recetas, textos creativos, traducciones, cultura general) recibe un texto
+fijo, "este canal atiende consultas sobre Nubbix", y no se resuelve. Dos capas:
+1. **Reglas fijas** (`check_scope` en `src/guardrails.py`): costo 0, no llama a ninguna IA. Exigen un pedido
+   de producir algo ajeno y que el ticket no mencione nada de Nubbix (API, factura, cuenta, error...).
+2. **Moderador de entrada:** un puntaje más, `fuera_de_alcance`, en la misma llamada que ya hacía. Si marca,
+   no se llama al generador ni al moderador de salida.
+
+Medido con Haiku: 6 de 6 pedidos ajenos que las reglas no reconocen los frenó el moderador, con 1 llamada en
+lugar de 3. De los 40 tickets reales, ninguno se marcó como fuera de alcance. Antes de este cambio, un pedido
+de programación gastaba 3 llamadas y la respuesta prometía derivarlo.
+
+**Verificación por tipo de operación (desde el 08/11/2026).** Un ataque bien escrito puede ser idéntico a
+un pedido legítimo, pero lo que pide sí se puede detectar. `src/verification.py` asigna, con reglas fijas,
+un nivel según la operación que pide el ticket. El ticket se atiende igual: se agrega una oración para el
+cliente al final de `answer` y una acción obligatoria al principio de `actions`. El contrato no cambia.
+
+| Nivel | Qué exige | Operaciones |
+|---|---|---|
+| 0 | Nada extra | Preguntas de "cómo", sin pedir un cambio |
+| 1 | Confirmar la identidad por el canal registrado | Recuperar acceso, desbloquear el usuario, cambiar el propio email |
+| 2 | Lo pide o confirma el titular, con un código a su canal registrado | Cualquier cambio de permisos (dar o quitar), titular, CUIT o razón social, verificación en dos pasos |
+| 3 | Nivel 2 + aprobación de un segundo agente | Dar de baja la cuenta, borrar datos, exportar todos los datos |
+
+Los niveles son una decisión de negocio (Sara, 08/11/2026). El servicio no sabe quién escribió el ticket:
+no envía el código, lo exige.
+
 Qué pasa cuando algo se detecta:
 - **Entrada:** no se llama al modelo. Se devuelve una respuesta segura y el ticket se deriva a revisión humana.
 - **Salida:** el `answer` se reemplaza por uno seguro y se agrega una acción para que el agente redacte la respuesta.
@@ -305,6 +335,7 @@ Cada ejecución agrega al menos una línea a `data/metrics.jsonl`. El campo `eve
 | `bloqueado_patron` | Un patrón de injection bloqueó la consulta. | 0: no hubo llamada. |
 | `bloqueado_moderador` | El moderador bloqueó la consulta. Su llamada queda aparte, como `llm`. | 0 en esta línea. |
 | `ticket` | El ticket terminó con respuesta. La latencia es la de punta a punta. | 0 en esta línea. |
+| `fuera_de_alcance` | El pedido es ajeno a Nubbix. Si lo frenaron las reglas, no hubo llamada; si fue el moderador, su llamada queda aparte como `llm`. | 0 en esta línea. |
 
 Desde el 08/11/2026 todas las líneas llevan `ticket_id`: las de un mismo ticket comparten el valor, así se
 puede medir la latencia y el costo por ticket. Las líneas anteriores no lo tienen.
@@ -418,6 +449,7 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   python tests/test_cache.py
   python tests/test_pii.py
   python tests/test_service.py
+  python tests/test_verification.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`

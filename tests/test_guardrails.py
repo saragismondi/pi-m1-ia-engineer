@@ -148,6 +148,37 @@ def test_tickets_con_numeros_y_codigos_no_se_bloquean():
         assert error is None and injection is None, f"{query!r} bloqueado por {error or injection}"
 
 
+# --- Alcance cerrado (mejora S0, 08/11/2026) ---------------------------------
+
+def test_pedidos_ajenos_a_nubbix():
+    from src.guardrails import check_scope
+    ajenos = {
+        "programacion": "Escribí una función en Python que calcule los números primos hasta n",
+        "receta": "¿Me pasás una receta de pastafrola para el domingo?",
+        "escritura_creativa": "Escribime un poema sobre el otoño",
+        "tarea_matematica": "Resolvé este ejercicio: x^2 + 3x = 10",
+        "traduccion": "Traducí este párrafo al inglés: hola a todos",
+        "cultura_general": "¿Quién fue San Martín?",
+        "tarea_escolar": "Haceme la tarea de historia",
+    }
+    for name, query in ajenos.items():
+        assert check_scope(query) == name, f"{query!r}: esperado {name}, obtuvo {check_scope(query)}"
+
+
+def test_pedidos_de_nubbix_parecidos_no_se_bloquean_por_alcance():
+    from src.guardrails import check_scope
+    legitimos = [
+        "Nuestra integración en Python con la API de Nubbix devuelve error 401",
+        "Me pasan un ejemplo de código para conectarme a la API?",
+        "¿Cómo agrego un usuario nuevo?",
+        "Necesito darle permisos de administrador a mi socio, ¿cómo lo hago?",
+        "hola",
+        "Quería felicitar a Martina de soporte",
+    ]
+    for query in legitimos + [c["query"] for c in DATASET]:
+        assert check_scope(query) is None, f"{query!r} bloqueado por {check_scope(query)}"
+
+
 # --- Salida: promesas -------------------------------------------------------
 
 def test_cada_patron_de_promesa_tiene_un_ejemplo():

@@ -140,7 +140,7 @@ def test_error_de_api_no_se_reintenta_en_el_servicio():
 
 # --- Métricas por ticket (mejora B1) ----------------------------------------
 
-SCORES_OK_IN = json.dumps({"inyeccion": 0.0, "jailbreak": 0.0, "extraccion": 0.0})
+SCORES_OK_IN = json.dumps({"inyeccion": 0.0, "jailbreak": 0.0, "extraccion": 0.0, "fuera_de_alcance": 0.0})
 SCORES_OK_OUT = json.dumps({"promesa_indebida": 0.0, "fuga_interna": 0.0, "obedece_inyeccion": 0.0})
 
 
@@ -194,9 +194,10 @@ class SchemaAwareProvider:
     name, model = "fake", "fake-model"
 
     def __init__(self, delay=0.0, flag_input=False, fail_generation=False, moderator_api_error=False,
-                 generation_bug=False):
+                 generation_bug=False, off_topic=False):
         self.delay, self.flag_input, self.fail_generation = delay, flag_input, fail_generation
         self.moderator_api_error, self.generation_bug = moderator_api_error, generation_bug
+        self.off_topic = off_topic
 
     def complete(self, system, user, schema=None):
         import time
@@ -207,7 +208,8 @@ class SchemaAwareProvider:
         if "inyeccion" not in props and "promesa_indebida" not in props and self.generation_bug:
             raise RuntimeError("bug en la generación")
         if "inyeccion" in props:
-            text = json.dumps({"inyeccion": 0.9 if self.flag_input else 0.0, "jailbreak": 0.0, "extraccion": 0.0})
+            text = json.dumps({"inyeccion": 0.9 if self.flag_input else 0.0, "jailbreak": 0.0, "extraccion": 0.0,
+                               "fuera_de_alcance": 0.9 if self.off_topic else 0.0})
         elif "promesa_indebida" in props:
             text = SCORES_OK_OUT
         elif self.fail_generation:
@@ -218,7 +220,7 @@ class SchemaAwareProvider:
                          prompt_tokens=10, completion_tokens=10, latency_s=self.delay, stop_reason="end_turn")
 
 
-def _run_triage(provider, parallel: str):
+def _run_triage(provider, parallel: str, query: str = "me cobraron dos veces"):
     import time
     original = service.get_provider
     service.get_provider = lambda name: provider
@@ -229,7 +231,7 @@ def _run_triage(provider, parallel: str):
         os.environ["MODERATION_PARALLEL"] = parallel
         start = time.perf_counter()
         try:
-            outcome = service.triage("me cobraron dos veces", "fake", use_cache=False, moderation="both")
+            outcome = service.triage(query, "fake", use_cache=False, moderation="both")
         except Exception as e:  # noqa: BLE001  (TriageError o un bug que debe subir)
             outcome = e
         finally:
@@ -288,6 +290,34 @@ def test_el_ticket_id_se_limpia_al_terminar():
     before = _TICKET_ID.get()
     _run_triage(SchemaAwareProvider(), "off")
     assert _TICKET_ID.get() == before
+
+
+# --- Alcance cerrado (mejora S0) ----------------------------------------------
+
+class NoCallProvider:
+    """Falla si alguien lo llama: sirve para comprobar que un pedido ajeno no gasta llamadas."""
+    name, model = "fake", "fake-model"
+
+    def complete(self, system, user, schema=None):
+        raise AssertionError("no debía llamarse a ninguna IA")
+
+
+def test_pedido_ajeno_no_llama_a_ninguna_ia():
+    outcome, lines, _ = _run_triage(NoCallProvider(), "off", "Escribime un poema sobre el otoño")
+    assert outcome.input_flag == "fuera_de_alcance:escritura_creativa", outcome.input_flag
+    assert outcome.response.category == "other" and "fuera de ese alcance" in outcome.response.answer
+    assert [l["event"] for l in lines] == ["fuera_de_alcance"]
+    assert lines[0]["cost_usd"] == 0.0
+
+
+def test_moderador_fuera_de_alcance_no_lo_trata_como_ataque():
+    # Capa 2: lo que las reglas no reconocen lo marca el moderador, en la misma llamada que ya hace.
+    outcome, lines, _ = _run_triage(SchemaAwareProvider(off_topic=True), "off", "contame algo de los dinosaurios")
+    assert outcome.input_flag.startswith("moderador:fuera_de_alcance"), outcome.input_flag
+    assert "fuera de ese alcance" in outcome.response.answer
+    assert "manipulación" not in " ".join(outcome.response.actions)
+    llm = [l for l in lines if l["event"] == "llm"]
+    assert [l["prompt_version"] for l in llm] == ["moderador_entrada"]  # ni generación ni moderador de salida
 
 
 def main() -> int:

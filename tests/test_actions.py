@@ -98,7 +98,7 @@ def test_servicio_marca_y_no_borra_las_acciones():
     with tempfile.TemporaryDirectory() as d:
         os.environ["METRICS_PATH"] = str(Path(d) / "m.jsonl")
         try:
-            result = service.triage("no puedo cambiar mi email", "fake", use_cache=False, moderation="off")
+            result = service.triage("tengo una consulta sobre mi cuenta", "fake", use_cache=False, moderation="off")
         finally:
             service.get_provider = original
             if old_metrics is None:

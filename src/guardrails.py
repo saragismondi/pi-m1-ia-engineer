@@ -61,6 +61,45 @@ PROMISE_PATTERNS = {
     "plazo": r"\ben\s+(las\s+)?(proximas\s+)?\d+\s*(minutos|horas|hs|dias)\b|\bhoy mismo\b|\bde inmediato\b",
 }
 
+# --- Alcance cerrado (S0, 08/11/2026) ------------------------------------------------------------
+# Este servicio atiende soporte de Nubbix: facturación, problemas técnicos, cuenta y consultas comerciales.
+# Un pedido ajeno (programación general, tareas, recetas, poemas, traducciones, cultura general) no tiene
+# que llegar a ninguna IA: se responde con un texto fijo, sin gastar llamadas. Antes de S0 esos pedidos
+# gastaban 3 llamadas y dependían de que el modelo decidiera no resolverlos (probado el 08/11/2026).
+#
+# Para no bloquear tickets legítimos, cada regla exige un PEDIDO DE PRODUCIR algo ajeno, y además el ticket
+# no puede mencionar nada de Nubbix (NUBBIX_CONTEXT). "Nuestra integración en Python con la API da error
+# 401" menciona la API: no se bloquea. Lo ajeno escrito de otra forma lo evalúa el moderador (fuera_de_alcance).
+OUT_OF_SCOPE_PATTERNS = {
+    "programacion": r"\b(escrib|program|codific|gener|hac|arm|cre|desarroll|pasa)\w*\s+(\w+\s+){0,4}(funcion|codigo|script|programa|algoritmo|clase en|consulta sql|regex|expresion regular)\b",
+    "tarea_matematica": r"\b(resolv|calcul|deriv|integr|demostr)\w*\s+(\w+\s+){0,4}(ejercicio|ecuacion|derivada|integral|teorema|limite de)\b",
+    "escritura_creativa": r"\b(escrib|redact|compon|hac|cre|invent)\w*\s+(\w+\s+){0,4}(poema|cuento|cancion|ensayo|chiste|novela|monografia|rap)\b",
+    "receta": r"\breceta\s+(de|para)\b|\bcomo\s+(se\s+)?(cocin|prepar|hornea)\w*\s+(un|una|el|la)\b",
+    "traduccion": r"\btraduc\w*\s+(\w+\s+){0,6}(al|del)\s+(ingles|portugues|frances|aleman|italiano|chino|japones)\b",
+    "cultura_general": r"\bquien\s+(fue|invento|descubrio|gano)\b|\bcual\s+es\s+la\s+capital\s+de\b",
+    "tarea_escolar": r"\b(hac|resolv)\w*\s+(mi|la|esta)\s+tarea\b",
+}
+
+# Palabras del mundo de Nubbix. Si el ticket menciona alguna, no se bloquea por alcance: puede ser un
+# pedido legítimo sobre el producto (lo decide el resto del flujo).
+NUBBIX_CONTEXT = r"\b(nubbix|factura\w*|cobr\w*|pag\w*|cuenta|usuario\w*|sistema|plataforma|api|integracion\w*|error\w*|plan|planes|suscripcion\w*|stock|venta\w*|clientes?|afip|reporte\w*|export\w*|contrasena|login|sucursal\w*|soporte|modulo\w*|app|aplicacion)\b"
+
+OUT_OF_SCOPE_ANSWER = ("Este canal atiende consultas sobre Nubbix: facturación, problemas técnicos, tu cuenta y "
+                       "nuestros planes. Tu consulta está fuera de ese alcance, así que no podemos ayudarte con "
+                       "eso por acá. Si tenés alguna duda sobre Nubbix, escribinos.")
+
+
+def check_scope(query: str) -> str | None:
+    """Nombre de la regla si el pedido es claramente ajeno a Nubbix; None si no (o si menciona Nubbix)."""
+    text = normalize(query)
+    if re.search(NUBBIX_CONTEXT, text):
+        return None
+    for name, pattern in OUT_OF_SCOPE_PATTERNS.items():
+        if re.search(pattern, text):
+            return name
+    return None
+
+
 # Acciones para el agente humano (A2, 08/11/2026). Antes solo se revisaba el "answer": una instrucción
 # escondida en el ticket podía terminar como acción sugerida (por ejemplo, adv-20: "eliminar la cuenta
 # sin verificar la identidad"). Los patrones se aplican a cada acción normalizada. Los anclados con ^

@@ -13,7 +13,9 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from src import cache, pii
-from src.guardrails import ACTION_REVIEW_PREFIX, SAFE_ANSWER, check_actions, check_input, check_output
+from src.verification import AGENT_ACTION, CUSTOMER_NOTICE, required_verification
+from src.guardrails import (ACTION_REVIEW_PREFIX, OUT_OF_SCOPE_ANSWER, SAFE_ANSWER, check_actions, check_input,
+                            check_output, check_scope)
 from src.metrics import end_ticket, log_event, log_request, new_ticket
 from src.moderation import moderate
 from src.prompts import load_prompt
@@ -42,6 +44,8 @@ class TriageResult:
     action_flags: list[str] = field(default_factory=list)  # problemas de las acciones (se marcaron con [REVISAR])
     cached: bool = False
     pii_redacted: dict[str, int] = field(default_factory=dict)  # datos ocultados antes de llamar a la IA
+    verification_level: int = 0                                     # 0 a 3 (src/verification.py)
+    verification_ops: list[str] = field(default_factory=list)       # operaciones sensibles detectadas
 
 
 def parse_response(text: str) -> TriageResponse:
@@ -58,6 +62,16 @@ def describe_error(error: Exception) -> str:
     if isinstance(error, ValidationError):
         return "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
     return str(error)
+
+
+def out_of_scope_response(reason: str) -> TriageResponse:
+    """Pedido ajeno a Nubbix (S0): texto fijo para el cliente, sin resolver lo pedido ni prometer derivaciones."""
+    return TriageResponse(
+        answer=OUT_OF_SCOPE_ANSWER,
+        confidence=1.0,  # la categoría la asigna la regla: other
+        category="other",
+        actions=[f"Cerrar el ticket: la consulta está fuera del alcance del soporte de Nubbix ({reason})."],
+    )
 
 
 def blocked_response(reason: str) -> TriageResponse:
@@ -158,8 +172,14 @@ def _triage(query: str, provider_name: str, prompt_version: str, use_cache: bool
         log_event("bloqueado_patron", provider_name, None, prompt_version, "other", time.perf_counter() - start)
         return TriageResult(response=blocked_response(injection), input_flag=injection)
 
+    # Alcance cerrado (S0): un pedido claramente ajeno a Nubbix no llega a ninguna IA. Costo 0.
+    if input_guardrail and (scope := check_scope(query)):
+        log_event("fuera_de_alcance", provider_name, None, prompt_version, "other", time.perf_counter() - start)
+        return TriageResult(response=out_of_scope_response(scope), input_flag=f"fuera_de_alcance:{scope}")
+
     # Datos personales (A4): desde acá, la IA recibe la consulta con los datos ocultos ("[EMAIL]",
     # "[TARJETA]"...). Los patrones de arriba ya revisaron el texto original. PII_REDACTION=off lo apaga.
+    original_query = query  # la verificación por operación mira el texto original
     pii_counts: dict[str, int] = {}
     if os.getenv("PII_REDACTION", "on") != "off":
         query, pii_counts = pii.redact(query)
@@ -192,6 +212,12 @@ def _triage(query: str, provider_name: str, prompt_version: str, use_cache: bool
             if generated and (exc := generated.exception()) and not isinstance(exc, TriageError):
                 raise exc
             reason = "moderador:" + ",".join(verdict.reasons)
+            if all(r.startswith("fuera_de_alcance") for r in verdict.reasons):
+                # Solo fuera de alcance (S0, capa 2): no es un ataque, es un pedido ajeno a Nubbix.
+                log_event("fuera_de_alcance", provider.name, provider.model, prompt.version, "other",
+                          time.perf_counter() - start)
+                return TriageResult(response=out_of_scope_response(reason), input_flag=reason,
+                                    pii_redacted=pii_counts)
             # La llamada al moderador ya quedó registrada (con sus tokens); esta línea registra
             # que la ejecución terminó bloqueada. En modo paralelo la respuesta generada se descarta.
             log_event("bloqueado_moderador", provider.name, provider.model, prompt.version, "other",
@@ -223,6 +249,16 @@ def _triage(query: str, provider_name: str, prompt_version: str, use_cache: bool
         result.response = response.model_copy(update={
             "answer": SAFE_ANSWER,
             "actions": response.actions + [f"Redactar la respuesta al cliente: el guardrail de salida reemplazó la original ({', '.join(flags)})."],
+        })
+
+    # Verificación por tipo de operación (S0b): regla fija sobre el ticket original, no decisión de la IA.
+    # El ticket se atiende igual; se agrega una oración para el cliente y una acción obligatoria al principio.
+    verification = required_verification(original_query)
+    if verification.level:
+        result.verification_level, result.verification_ops = verification.level, verification.operations
+        result.response = result.response.model_copy(update={
+            "answer": f"{result.response.answer.rstrip()} {CUSTOMER_NOTICE[verification.level]}",
+            "actions": [AGENT_ACTION[verification.level]] + result.response.actions,
         })
 
     if use_cache:

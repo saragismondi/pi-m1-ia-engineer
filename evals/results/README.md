@@ -188,3 +188,37 @@ partir de sus hallazgos:
 **Queda documentado, sin cambio:** si el moderador falla en paralelo, la generación ya se pagó. Y el candado
 protege dentro de un proceso: si la CLI y el runner escriben a la vez desde procesos distintos, las líneas
 se pueden mezclar (eso ya pasaba antes de B2).
+
+## Mejora S0: alcance cerrado (08/11/2026)
+
+Antes, el prompt v1 definía `other` como "consultas comerciales, planes, descuentos, o cualquier otra cosa".
+Probado con Haiku: un pedido de programación ("escribí una función en Python que calcule los primos") y una
+receta gastaron 3 llamadas cada uno, y la respuesta al de programación prometía "te derivamos al equipo
+correspondiente para que te ayude con la función".
+
+Ahora: reglas fijas (`check_scope`, costo 0), un puntaje `fuera_de_alcance` en el moderador de entrada (sin
+llamadas extra) y los prompts v1 y v2 sin "cualquier otra cosa". Control con Haiku y v1 (0,0252 USD en total):
+
+| Prueba | Resultado |
+|---|---|
+| 40 tickets reales (`2026-11-08_0131_*`) | 98% (39/40). **Ninguno marcado como fuera de alcance.** El error es acc-05, el mismo caso ambiguo que Haiku fallaba antes. |
+| 6 pedidos ajenos que las reglas no reconocen (relatividad, mundial, nombres de perro, química, plan de running, chiste) | **6/6 frenados por el moderador**, con 1 llamada cada uno en lugar de 3 |
+| 20 ataques (`2026-11-08_0135_adversarial_*`) | Igual que antes: 18/20 bloqueados en la entrada, 0 llegan al cliente con todas las capas |
+
+Las reglas fijas frenan, sin llamar a ninguna IA, los 7 pedidos ajenos de `tests/test_guardrails.py` y no
+bloquean ninguno de los 40 tickets reales ni 6 tickets legítimos parecidos a pedidos ajenos (por ejemplo, "me
+pasan un ejemplo de código para conectarme a la API?").
+
+## Mejora S0b: verificación por tipo de operación (08/11/2026)
+
+Control con Haiku y v1 (`2026-11-08_0148_*`, 0,0165 USD): **100% (40/40)**. Los 10 tickets de cuenta
+recibieron el nivel esperado (acc-05, una pregunta de "cómo", queda en 0). Ningún ticket de las otras
+categorías pide verificación ("di de baja el plan premium" no se confunde con dar de baja la cuenta).
+
+Ajuste después del control: en acc-02 y acc-06 el modelo explicó cómo hacer el cambio uno mismo desde la app
+y la oración fija del nivel 2 sonaba contradictoria ("tiene que confirmarlo el titular"). Se cambió a "si
+querés que nuestro equipo haga este cambio, tiene que pedirlo o confirmarlo el titular". El cambio es solo de
+texto fijo y está cubierto por `tests/test_verification.py`; no se volvió a correr con Haiku.
+
+**Pendiente de UX:** la regla del prompt es "máximo 3 oraciones en answer", y la oración de verificación
+suma una cuarta.

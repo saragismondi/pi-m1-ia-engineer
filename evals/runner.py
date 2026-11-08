@@ -55,7 +55,7 @@ def read_metric_lines_since(start: int) -> list[dict]:
 def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> list[dict]:
     results = []
     for i, case in enumerate(cases, 1):
-        answer, output_flags, actions, action_flags = None, [], [], []
+        answer, output_flags, actions, action_flags, verification_level = None, [], [], [], 0
         try:
             # Sin caché: cada corrida tiene que medir llamadas reales.
             result = triage(case["query"], provider, prompt, use_cache=False)
@@ -63,6 +63,7 @@ def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> li
             answer = result.original_answer or result.response.answer
             output_flags = result.output_flags
             actions, action_flags = result.response.actions, result.action_flags
+            verification_level = result.verification_level
         except TriageError as e:
             predicted, error = None, str(e)
         results.append({
@@ -76,6 +77,7 @@ def run_one(provider: str, prompt: str, cases: list[dict], sleep_s: float) -> li
             "output_flags": output_flags,  # lo que detectó el guardrail de salida
             "actions": actions,            # acciones finales (las riesgosas llevan [REVISAR])
             "action_flags": action_flags,  # lo que detectó el guardrail de acciones
+            "verification_level": verification_level,  # 0 a 3 (src/verification.py)
         })
         mark = "ok " if results[-1]["correct"] else "MAL"
         print(f"  [{i:>2}/{len(cases)}] {mark} {case['id']:<7} esperado={case['expected_category']:<9} predicho={predicted}")
@@ -98,7 +100,7 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
     # "cache" y "bloqueado_*" no son llamadas y no deben entrar en el promedio por llamada.
     # Latencia por ticket: los que terminaron con respuesta ("ticket") y los que se resolvieron sin generar
     # (caché o bloqueo). Los tickets que terminaron en error no tienen línea y quedan afuera.
-    tickets = [m for m in metrics if m.get("event") in ("ticket", "cache", "bloqueado_patron", "bloqueado_moderador")]
+    tickets = [m for m in metrics if m.get("event") in ("ticket", "cache", "bloqueado_patron", "bloqueado_moderador", "fuera_de_alcance")]
     metrics = [m for m in metrics if m.get("event", "llm") == "llm"]
     costs = [m["cost_usd"] for m in metrics if m["cost_usd"] is not None]
     latencies = [m["latency_s"] for m in metrics]
