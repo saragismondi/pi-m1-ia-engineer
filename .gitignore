@@ -22,3 +22,6 @@ Thumbs.db
 
 # Caché local de respuestas (se regenera sola)
 data/cache.jsonl
+
+# Plan de mejoras: documento de trabajo local, no se sube (tiene su propio repo: pi-m1-plan-mejoras)
+docs/PLAN_MEJORAS.md
