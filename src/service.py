@@ -7,12 +7,14 @@ from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
+import contextvars
 import os
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from src import cache, pii
 from src.guardrails import ACTION_REVIEW_PREFIX, SAFE_ANSWER, check_actions, check_input, check_output
-from src.metrics import log_event, log_request
+from src.metrics import end_ticket, log_event, log_request, new_ticket
 from src.moderation import moderate
 from src.prompts import load_prompt
 from src.providers import API_ERRORS, get_provider
@@ -101,8 +103,45 @@ def call_llm(provider, prompt, query: str) -> TriageResponse:
     raise TriageError(f"Se agotaron los {MAX_ATTEMPTS} intentos sin una respuesta válida. Último error: {last_error}")
 
 
+def _moderate_and_generate_in_parallel(query: str, moderator, provider, prompt):
+    """Mejora B2 (08/11/2026): moderador de entrada y generación al mismo tiempo, en dos hilos.
+
+    En serie, el ticket espera al moderador (~0,95 s con Haiku) y recién después genera (~2 s).
+    En paralelo, espera solo a la más lenta de las dos.
+
+    Costo y riesgo (por eso está apagado por defecto, MODERATION_PARALLEL=off):
+      - si el moderador bloquea, la respuesta generada se paga igual y se descarta;
+      - el modelo procesa el ticket antes de saber si es un ataque (su respuesta nunca sale);
+      - un ticket bloqueado tarda lo mismo que uno normal, porque se espera a que termine la generación
+        (así ningún hilo sigue escribiendo métricas cuando el ticket ya terminó).
+
+    Cada hilo corre con una copia del contexto, para que sus líneas de métricas lleven el ticket_id (B1).
+    Moderador y generador son clientes distintos (get_provider crea uno nuevo cada vez): no comparten conexión.
+
+    Devuelve (veredicto del moderador, Future con la respuesta generada). El Future ya terminó; si la
+    generación falló, .result() relanza su error (TriageError).
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        verdict_future = pool.submit(contextvars.copy_context().run, moderate, query, "entrada", moderator)
+        generated: Future = pool.submit(contextvars.copy_context().run, call_llm, provider, prompt, query)
+        verdict = verdict_future.result()
+    # Al salir del "with", el pool ya esperó a que terminen los dos hilos: nada sigue escribiendo métricas.
+    return verdict, generated
+
+
 def triage(query: str, provider_name: str, prompt_version: str = "v1",
            use_cache: bool = True, input_guardrail: bool = True, moderation: str | None = None) -> TriageResult:
+    """Procesa una consulta. Todas las líneas de métricas de esta consulta comparten un ticket_id (B1);
+    al terminar, el identificador se limpia aunque haya un error."""
+    token = new_ticket()
+    try:
+        return _triage(query, provider_name, prompt_version, use_cache, input_guardrail, moderation)
+    finally:
+        end_ticket(token)
+
+
+def _triage(query: str, provider_name: str, prompt_version: str, use_cache: bool,
+            input_guardrail: bool, moderation: str | None) -> TriageResult:
     """input_guardrail=False apaga las dos capas de entrada (patrones y moderador): solo existe
     para medir su efecto en los evals adversariales.
     moderation: off | output | both (por defecto, la variable MODERATION del .env, o "both").
@@ -143,16 +182,24 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
 
     # Capa 2 de entrada: el moderador LLM, para ataques que los patrones no reconocen.
     if input_guardrail and moderation == "both":
-        verdict = moderate(query, "entrada", moderator)
+        if os.getenv("MODERATION_PARALLEL", "off") == "on":
+            verdict, generated = _moderate_and_generate_in_parallel(query, moderator, provider, prompt)
+        else:
+            verdict, generated = moderate(query, "entrada", moderator), None
         if verdict.flagged:
+            # En paralelo, un error de la generación que NO sea esperable (un bug, no TriageError) no se
+            # esconde detrás del bloqueo: se relanza (revisión independiente de B2, 08/11/2026).
+            if generated and (exc := generated.exception()) and not isinstance(exc, TriageError):
+                raise exc
             reason = "moderador:" + ",".join(verdict.reasons)
             # La llamada al moderador ya quedó registrada (con sus tokens); esta línea registra
-            # que la ejecución terminó bloqueada, sin llamar al modelo que responde.
+            # que la ejecución terminó bloqueada. En modo paralelo la respuesta generada se descarta.
             log_event("bloqueado_moderador", provider.name, provider.model, prompt.version, "other",
                       time.perf_counter() - start)
             return TriageResult(response=blocked_response(reason), input_flag=reason, pii_redacted=pii_counts)
-
-    response = call_llm(provider, prompt, query)
+        response = generated.result() if generated else call_llm(provider, prompt, query)
+    else:
+        response = call_llm(provider, prompt, query)
 
     # Acciones para el agente (A2): las riesgosas no se borran, se marcan con [REVISAR] para que el
     # agente las mire antes de seguirlas. Borrarlas le escondería información a quien decide.
@@ -180,4 +227,7 @@ def triage(query: str, provider_name: str, prompt_version: str = "v1",
 
     if use_cache:
         cache.put(key, result.response.model_dump())
+    # Una línea por ticket con la latencia de punta a punta (B1): suma todas las llamadas y el código.
+    log_event("ticket", provider.name, provider.model, prompt.version, result.response.category,
+              time.perf_counter() - start)
     return result

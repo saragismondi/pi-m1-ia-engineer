@@ -142,3 +142,49 @@ con Haiku y v1, moderación completa: `python evals/runner.py --provider anthrop
 - **Falsos positivos de A2:** ninguna de las 118 acciones reales de los 40 casos se marcó.
 - **Gasto total del bloque A en API:** 0,0229 USD (adversariales 0,0074 + prueba de adv-20 0,0003 + este
   control 0,0152).
+
+## Mejora B: métricas por ticket y moderador en paralelo (08/11/2026)
+
+**B1.** Cada línea de `data/metrics.jsonl` lleva `ticket_id`, y al final de cada ticket con respuesta se
+escribe una línea `event: "ticket"` con la latencia de punta a punta. El resumen del runner suma solo las
+llamadas a una IA (antes sumaba todas las líneas) y agrega `ticket_latency_p50_s`. Con los datos de la
+corrida `0024`, el resumen da los mismos números que antes (1,42 s y 0,015197 USD).
+
+**B2.** Con `MODERATION_PARALLEL=on`, el moderador de entrada y la generación corren al mismo tiempo.
+
+Medición con Haiku, v1, los mismos 20 casos (los 10 de billing y los 10 de technical):
+
+| | En serie (`0042`) | En paralelo (`0045`) |
+|---|---|---|
+| Score | 100% (20/20) | 100% (20/20) |
+| Latencia por ticket, mediana | 4,40 s | **3,15 s (−28%)** |
+| Latencia por ticket, media | 4,78 s | 3,62 s (−24%) |
+| Latencia por ticket, p90 | 5,85 s | 5,52 s (−6%) |
+| Costo | 0,007632 USD | 0,007681 USD |
+
+- La cuenta previa con promedios daba −23%. La medición da −28% en la mediana y −6% en el p90: los tickets
+  más lentos mejoran poco porque los domina la generación o el moderador de salida.
+- **Límites:** 20 casos, solo de dos categorías, una corrida de cada modo. No hubo bloqueos en estos casos,
+  así que no se midió el costo extra de una generación descartada.
+- **Bug encontrado al testear:** con dos hilos escribiendo en `data/metrics.jsonl`, las líneas se mezclaron y
+  quedaron JSON rotos. `tests/test_service.py` falló en 7 de 15 corridas. Con un candado en
+  `src/metrics.py` pasó 15 de 15.
+- Costo de la medición: 0,0153 USD.
+
+**Revisión independiente de B2** (un agente que leyó el código sin conocer estas conclusiones, sin llamar a
+ninguna IA). No encontró errores graves de concurrencia; confirmó ejecutando código que el contexto llega a
+los hilos, que el candado hace falta y que excepciones y bloqueos dan lo mismo que en serie. Corregido a
+partir de sus hallazgos:
+- la latencia por ticket del runner incluye ahora los tickets resueltos por caché o bloqueo (los que
+  terminan en error siguen afuera, porque no tienen línea);
+- en paralelo, un error inesperado de la generación (un bug, no `TriageError`) ya no queda oculto detrás de
+  un bloqueo del moderador: se relanza;
+- el `ticket_id` se limpia al terminar cada ticket, aunque haya error;
+- los tests que dependen del orden de las llamadas fijan `MODERATION_PARALLEL=off`, y el test de tiempo
+  tiene más margen (0,5 s por llamada, umbral de 0,2 s);
+- tests nuevos: moderador con error de API en paralelo (bloquea), bug de la generación (sube) y limpieza del
+  `ticket_id`.
+
+**Queda documentado, sin cambio:** si el moderador falla en paralelo, la generación ya se pagó. Y el candado
+protege dentro de un proceso: si la CLI y el runner escriben a la vez desde procesos distintos, las líneas
+se pueden mezclar (eso ya pasaba antes de B2).

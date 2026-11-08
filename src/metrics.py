@@ -6,6 +6,9 @@ Cualquiera puede rehacer la cuenta con los tokens de cada línea y la tabla PRIC
 """
 import json
 import os
+import threading
+import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,11 +41,37 @@ def metrics_path() -> Path:
     return Path(os.getenv("METRICS_PATH", DEFAULT_METRICS_PATH))
 
 
+# Identificador del ticket en curso (mejora B1, 08/11/2026). Todas las líneas que se escriben mientras se
+# procesa un ticket llevan el mismo ticket_id, así se puede medir la latencia y el costo POR TICKET y no solo
+# por llamada. Es un ContextVar: si una llamada corre en otro hilo, hay que copiar el contexto (ver service.py).
+_TICKET_ID: ContextVar[str | None] = ContextVar("ticket_id", default=None)
+
+
+# Un hilo escribe por vez (B2). Sin esto, con el moderador en paralelo, dos líneas se mezclaron en el
+# archivo y quedaron JSON rotos (08/11/2026: tests/test_service.py falló en 7 de 15 corridas).
+_WRITE_LOCK = threading.Lock()
+
+
+def new_ticket():
+    """Empieza un ticket nuevo: las líneas siguientes llevan un identificador nuevo.
+
+    Devuelve un token para end_ticket(): al terminar, el identificador vuelve a su valor anterior y las
+    líneas que se escriban después no quedan asociadas a este ticket.
+    """
+    return _TICKET_ID.set(uuid.uuid4().hex[:12])
+
+
+def end_ticket(token) -> None:
+    _TICKET_ID.reset(token)
+
+
 def _append(record: dict) -> dict:
+    record["ticket_id"] = _TICKET_ID.get()
     path = metrics_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:  # "a" = append: nunca se borra lo anterior
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+    with _WRITE_LOCK, path.open("a", encoding="utf-8") as f:  # "a" = append: nunca se borra lo anterior
+        f.write(line)
     return record
 
 
@@ -52,7 +81,8 @@ def log_event(event: str, provider: str, model: str | None, prompt_version: str,
 
     La consigna pide que cada ejecución registre tokens, latencia y costo. Acá los tokens y el
     costo son 0 porque no hubo llamada; la latencia es la del servicio completo.
-    event: "cache" | "bloqueado_patron" | "bloqueado_moderador".
+    event: "cache" | "bloqueado_patron" | "bloqueado_moderador" | "ticket" (fin de un ticket con respuesta;
+    la latencia es la de punta a punta, y los tokens de sus llamadas están en las líneas "llm").
     """
     return _append({
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),

@@ -66,6 +66,8 @@ Variables principales (todas documentadas en `.env.example`):
 | `MODERATION` | `both` | Moderador LLM: `off`, `output` (solo la respuesta) o `both` (ticket y respuesta). |
 | `MODERATION_THRESHOLD` | `0.5` | Puntaje de riesgo (0 a 1) desde el cual el moderador marca. |
 | `MODERATOR_PROVIDER` | `anthropic` | Proveedor del moderador. |
+| `MODERATION_PARALLEL` | `off` | `on` corre el moderador de entrada y la generación al mismo tiempo (ver *Decisiones*). |
+| `PII_REDACTION` | `on` | Oculta datos personales antes de llamar a la IA. `off` lo apaga. |
 
 ## Uso
 
@@ -150,6 +152,7 @@ consulta
 | `tests/test_actions.py` | Tests del guardrail de acciones, sin LLM. |
 | `tests/test_cache.py` | Tests de la clave de caché, sin LLM. |
 | `tests/test_pii.py` | Tests del ocultamiento de datos personales, sin LLM. |
+| `tests/test_service.py` | Tests del parseo del JSON y los reintentos, sin LLM. |
 | `src/pii.py` | Oculta datos personales antes de llamar a la IA. |
 
 ## Context engineering: técnica elegida
@@ -301,6 +304,10 @@ Cada ejecución agrega al menos una línea a `data/metrics.jsonl`. El campo `eve
 | `cache` | La respuesta salió de la caché. | 0: no hubo llamada. |
 | `bloqueado_patron` | Un patrón de injection bloqueó la consulta. | 0: no hubo llamada. |
 | `bloqueado_moderador` | El moderador bloqueó la consulta. Su llamada queda aparte, como `llm`. | 0 en esta línea. |
+| `ticket` | El ticket terminó con respuesta. La latencia es la de punta a punta. | 0 en esta línea. |
+
+Desde el 08/11/2026 todas las líneas llevan `ticket_id`: las de un mismo ticket comparten el valor, así se
+puede medir la latencia y el costo por ticket. Las líneas anteriores no lo tienen.
 
 En las líneas sin llamada, la latencia es la del servicio completo. Las líneas anteriores a este campo
 (hasta el 07/11/2026 a las 23:10 UTC) son todas llamadas a un LLM y no tienen `event`. Las consultas
@@ -356,6 +363,11 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
 - **El moderador corre en Haiku y no en Groq.** Cuando el moderador corría en Groq, cada ticket gastaba
   3 llamadas y se agotó el cupo diario del plan gratis (200.000 tokens). Por eso, además, Groq pasó de
   gpt-oss-20b a gpt-oss-120b, que tiene su propia fila de límite en la documentación de Groq.
+- **Moderador en paralelo: disponible, apagado por defecto** (`MODERATION_PARALLEL=on`). Medido con Haiku y v1
+  en los mismos 20 casos (`evals/results/2026-11-08_0042_*` en serie y `0045_*` en paralelo): la mediana por
+  ticket bajó de 4,40 s a 3,15 s (−28%), con el mismo acierto (100%) y el mismo costo. El riesgo: el modelo
+  procesa el ticket antes de saber si es un ataque. Su respuesta nunca sale, pero si el moderador bloquea, la
+  generación se paga igual. Por eso la decisión de prenderlo queda explícita.
 - **Modo de falla seguro:** si el moderador no responde, el ticket va a revisión humana.
 - **`temperature=0` en Groq,** para que las respuestas sean estables. anthropic 2.6.0 no acepta `temperature`.
 - **Reintentos:** los errores de red y de límites los reintenta el SDK (3 veces, timeout de 30 s). Las
@@ -405,12 +417,15 @@ $ python -m src.main "no me llega el mail para recuperar la contraseña" --provi
   python tests/test_actions.py
   python tests/test_cache.py
   python tests/test_pii.py
+  python tests/test_service.py
   ```
 
   Para comprobar que los tests detectan errores, se quitaron dos patrones a propósito (`cambio_de_rol`
   y `plazo`) y fallaron 3 de los 13 tests.
-- **Falta testear** el parseo del JSON y los reintentos sin llamar al LLM (la clave de caché ya tiene tests). Se podría hacer con
-  un proveedor falso que devuelva respuestas armadas a mano.
+- **Tests del parseo y los reintentos: hechos** (`tests/test_service.py`, sin LLM; con los de las mejoras B1 y
+  B2 son 18). Usan un proveedor falso
+  que devuelve respuestas armadas a mano. Para comprobar que detectan errores, se bajaron los intentos de 3 a 2 y
+  se quitó el detalle del error que recibe el modelo: en los dos casos fallaron 2 tests.
 
 ## Uso de IA en el desarrollo
 

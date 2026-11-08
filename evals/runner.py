@@ -94,8 +94,15 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
         by_cat[r["expected"]][0] += r["correct"]
         by_cat[r["expected"]][1] += 1
     clear = [r for r in results if r["type"] == "claro"]
+    # Solo las llamadas a una IA (event "llm"; las líneas viejas no tienen event). Las líneas "ticket",
+    # "cache" y "bloqueado_*" no son llamadas y no deben entrar en el promedio por llamada.
+    # Latencia por ticket: los que terminaron con respuesta ("ticket") y los que se resolvieron sin generar
+    # (caché o bloqueo). Los tickets que terminaron en error no tienen línea y quedan afuera.
+    tickets = [m for m in metrics if m.get("event") in ("ticket", "cache", "bloqueado_patron", "bloqueado_moderador")]
+    metrics = [m for m in metrics if m.get("event", "llm") == "llm"]
     costs = [m["cost_usd"] for m in metrics if m["cost_usd"] is not None]
     latencies = [m["latency_s"] for m in metrics]
+    ticket_latencies = sorted(m["latency_s"] for m in tickets)
     return {
         "provider": provider,
         "prompt": prompt,
@@ -108,6 +115,8 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
         "requests": len(metrics),
         "retries": sum(m["attempt"] > 1 for m in metrics),
         "avg_latency_s": round(sum(latencies) / len(latencies), 2) if latencies else None,
+        # Latencia de punta a punta por ticket (B1): mediana, porque un ticket lento no la mueve tanto.
+        "ticket_latency_p50_s": round(ticket_latencies[len(ticket_latencies) // 2], 2) if ticket_latencies else None,
         "total_tokens": sum(m["total_tokens"] for m in metrics),
         "cost_usd": round(sum(costs), 6) if len(costs) == len(metrics) else None,
     }
@@ -115,7 +124,7 @@ def summarize(provider: str, prompt: str, results: list[dict], metrics: list[dic
 
 def markdown_table(summaries: list[dict]) -> str:
     cols = ["prompt", "provider", "n", "global", "clear_only", *CATEGORIES,
-            "failed", "output_flagged", "retries", "avg_latency_s", "total_tokens", "cost_usd"]
+            "failed", "output_flagged", "retries", "avg_latency_s", "ticket_latency_p50_s", "total_tokens", "cost_usd"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for s in summaries:
         lines.append("| " + " | ".join(str(s[c]) for c in cols) + " |")
